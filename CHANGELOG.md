@@ -10,6 +10,70 @@ Versions before **1.6.0** are reconstructed retroactively from git history; the 
 
 ## [Unreleased]
 
+### Added — a campaign brain, deterministic graph seeding, and a grounding check
+
+Three tools that address one problem: the DM drifting from canon as a campaign
+grows, and nothing catching it when it does. Existing campaigns get the benefit
+without any migration — `graph_seed.py` seeds a missing `graph.json`, and
+`brain.py` derives a brief from files that are already there.
+
+- **`scripts/campaign_facts.py`** — the shared parse layer over `state.md`,
+  `npcs.md`, `world.md`, and `source-index.md`. No LLM in the loop.
+- **`scripts/graph_seed.py`** — seeds `graph.json` deterministically from the
+  index files: `npc --member_of--> faction`, `npc --based_at--> place`,
+  `party --disposition--> npc`, `party --standing--> faction`, every edge tagged
+  with the source line it came from. Dry-run by default and idempotent, so it
+  doubles as a post-save drift check. Backs up any existing `graph.json` before
+  writing. Backfills the `graph init` flow that `SKILL-commands.md` documented but
+  which had no script behind it. It never guesses: an unresolvable faction or an
+  unmappable stance is reported under `UNRESOLVED` rather than written as a
+  confident edge, and it cross-checks `world.md`'s per-faction attitude against
+  `state.md`'s faction stances and reports `STANCE CONFLICTS` — the two are
+  separate canonical sources for one fact, so a mismatch is real drift.
+- **`scripts/brain.py`** — generates `<campaign>/brain.md`, the always-hot brief
+  read at every `/dm:dnd load`. Carries the live situation, Pinned Facts
+  (verbatim), on-scene cast, factions, open loops, active relationships, the
+  chapter window, and pending canon decisions. Deterministic and diffable;
+  sections drop lowest-priority-first against a word budget, and every drop is
+  reported on stderr *and* marked in the file, so a truncated brain never looks
+  complete. Pinned Facts are never dropped. `--check` exits 1 when the brief is
+  behind its sources.
+- **`scripts/check.py`** — the grounding gate. A capitalized name in a draft that
+  appears **nowhere in the campaign corpus** is a name the DM invented; the
+  campaign is its own vocabulary, so drift is exactly what falls outside it.
+  Reports near-miss suggestions via Damerau-Levenshtein distance, and flags
+  disposition drift (an NPC the graph records as `hostile`, narrated warmly) as
+  advisory. Advisory by default so it can be introduced without blocking play;
+  `--strict` is the hard gate.
+
+### Changed
+
+- **`/dm:dnd load` step 5** now regenerates and reads `brain.md` instead of
+  carrying a seven-item list of which files to read and which not to. Those rules
+  described where the facts lived rather than containing them, so a skipped read
+  had no fallback — and every one of them was a request to the model, which is
+  what decays under context pressure. Falls back to the previous manual read
+  sequence if `brain.py` is unavailable, so nothing downstream depends on it.
+- **`/dm:dnd save`** regenerates the brain as its last step, and folds newly added
+  NPCs and factions into the graph first.
+- **New commands** `/dm:dnd check` and `/dm:dnd brain`; `/dm:dnd graph init` now
+  points at `graph_seed.py`.
+
+### Notes for the maintainer
+
+- `VERSION` is untouched — this adds capability, so it wants a MINOR bump at
+  release time.
+- Validated on a long imported campaign (~690 KB across ~100 files, 33 NPCs, 5
+  factions, 22 chapter sources): `graph_seed.py` produced 59 nodes / 53 edges,
+  `brain.md` came to 1,702 words (~2.3k tokens), and `check.py` reported **0
+  false positives across 7,622 capitalized tokens of canon** while catching
+  every invented name. The 0-false-positive result is what makes the gate safe
+  to rely on, and it is pinned by a test so it cannot silently regress — expect
+  the real-world false-positive profile to differ on other campaigns, since
+  `check.py`'s stopword list is hand-maintained and grows only on observed
+  false positives.
+- 62 new tests in `tests/test_campaign_brain.py`; the existing 262 still pass.
+
 ## [2.5.0] — 2026-09-16 — Creature defenses, narration badges, and an XP ledger
 
 Six fixes in one release, so an existing install updates once and receives all
