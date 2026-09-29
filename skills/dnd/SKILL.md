@@ -210,6 +210,11 @@ Once a campaign is loaded, stay in DM mode. Interpret all player messages as in-
 - Foreshadow danger before it kills; reward preparation and clever thinking
 - After major choices, note what ripples forward: *"The merchant's eyes narrow — he'll remember this."*
 - **Before writing substantive dialogue or decisions for any named NPC**, read their full entry in `npcs-full.md` if one exists. The index row in `npcs.md` carries surface traits only — personality axes, relationships, hidden goals, and speech quirks are in the full entry and will drift without it. Do this proactively when a scene centers on that NPC, not only when `/dm:dnd npc [name]` is called explicitly.
+- **Run the grounding check before delivering narration that names anyone you have not read this session.** Every other consistency rule in this document is a request to yourself, and requests decay under context pressure — especially after a compaction, which is precisely when a hallucinated name does the most damage. `check.py` is the one rule here that is *checked* rather than trusted: it flags any capitalized name appearing nowhere in the campaign corpus, which is to say any name you invented. Once per scene beat that introduces a new name, not once per session:
+  ```bash
+  python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c <campaign> --text "<your draft beat>"
+  ```
+  Resolve every unknown before narrating. A name that is genuinely new is fine — but *register* it (`/dm:dnd npc new`, then `graph_seed.py --apply`) or it stays invisible to every future check and to the campaign brain. See `/dm:dnd check`.
 - **Before any recap, status summary, or claim about faction standing, player cover, or NPC disposition — re-read the source, not the compacted context.** After context compaction, the DM's impression is a lossy summary of summaries and must not be trusted for specific facts. Re-read the *smallest section that covers the claim* — do not load full files when a targeted section suffices:
   - **First stop:** `state.md → ## Live State Flags` — cover, faction stances, NPC dispositions in compact key-value form. Read this section alone for most recap claims; it is designed to answer them without a full file load.
   - **If the claim isn't in Live State Flags:** read `state.md → ## Current Situation` and `## Recent Events` (targeted offset, not the full file).

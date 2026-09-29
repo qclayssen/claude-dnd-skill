@@ -334,6 +334,131 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/calendar.py -c $CAMP events
 
 ---
 
+## Campaign Brain — `scripts/brain.py`
+
+Generates `<campaign>/brain.md`: the always-hot campaign brief, assembled
+deterministically from `state.md`, `npcs.md`, `world.md`, `source-index.md`, and
+`graph.json`. One read at load replaces the whole read-don't-read instruction
+list — see the `/dm:dnd load` procedure. No LLM calls; same inputs produce the
+same file, so it is diffable and reviewable.
+
+Sections, in load-priority order: NOW · PINNED FACTS (verbatim) · IN SCENE ·
+FACTIONS · OPEN LOOPS · RELATIONSHIPS · CHAPTER WINDOW · PENDING CANON DECISIONS ·
+DEEP FILES. Sections are dropped lowest-priority-first when the word budget is
+exceeded, and every drop is reported on stderr *and* marked in the file — a
+truncated brain never looks complete. Pinned Facts are never dropped.
+
+```bash
+CAMP=my-campaign
+
+# Regenerate (run after every /dm:dnd save, and before every /dm:dnd load):
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c $CAMP
+
+# Print instead of writing:
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c $CAMP --stdout
+
+# Staleness gate — exit 1 if brain.md is older than any source it was built from:
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c $CAMP --check
+
+# Tighter/larger budget (default 2200 words, ~3k tokens):
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c $CAMP --max-words 1200
+
+# At a specific session rather than the session counter:
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c $CAMP --at-session 7
+```
+
+**Pinned Facts and the chapter steering notes are copied verbatim.** Do not
+hand-edit `brain.md`; regenerate it. If a Pinned Fact is wrong, fix it at the
+source with `/dm:dnd pin`.
+
+---
+
+## Grounding Check — `scripts/check.py`
+
+The mechanical anti-hallucination gate. A capitalized name in a draft that
+appears **nowhere in the campaign corpus** is a name the DM invented. The
+campaign is its own vocabulary — every file, including `source/*.md` and
+`npc-files/*.md`, contributes — so drift is precisely what falls outside it.
+
+Measured on a long imported campaign: 0 false positives across 7,622
+capitalized tokens of canon, while invented names are caught every time.
+Because a gate that cries wolf mid-scene gets switched off, unknown names are
+**advisory by default** (exit 0); `--strict` is what actually fails.
+
+```bash
+CAMP=my-campaign
+
+# Check a draft (--text, --file, or pipe via stdin):
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c $CAMP --text "Ilva opens the ledger."
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c $CAMP --file /tmp/draft.md
+cat /tmp/draft.md | python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c $CAMP
+
+# Fail the turn on an unknown name:
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c $CAMP --file /tmp/draft.md --strict
+
+# A legitimately new NPC: accept it for this run, then register it properly
+# (see /dm:dnd npc new + graph_seed.py --apply) so future checks know the name:
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c $CAMP --file /tmp/draft.md --allow Orlan
+
+# Machine-readable, and skip the advisory disposition-drift pass:
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c $CAMP --file /tmp/draft.md --json
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c $CAMP --file /tmp/draft.md --no-disposition
+```
+
+Exit codes: `0` clean (or warnings only) · `1` unknown proper noun under
+`--strict` · `2` usage error.
+
+Also reports **disposition drift** (advisory): an NPC the graph records as
+`hostile` being narrated warmly, or vice versa.
+
+The check is **per word**, not per name: "Gormund Bale" is looked up as
+"Gormund" and "Bale" separately, so a canon first name with an invented surname
+passes. Tokens are normalised first: a trailing possessive (ASCII or typographic `'s`) is
+stripped, hyphenated words are split, and a capitalized common opener
+("Suddenly", "Nobody") at the start of a sentence is ignored unless the same
+word is also capitalized mid-sentence.
+
+---
+
+## Graph Seed — `scripts/graph_seed.py`
+
+Seeds `graph.json` deterministically from the index files — the `graph init`
+flow `SKILL-commands.md` describes but that had no script behind it. Proposes
+`npc --member_of--> faction`, `npc --based_at--> place`,
+`party --disposition--> npc`, and `party --standing--> faction`, every edge
+tagged with the source line it came from.
+
+Dry-run by default. Idempotent: re-running proposes only what is genuinely
+missing, so it doubles as a drift check after each save.
+
+```bash
+CAMP=my-campaign
+
+# Propose (writes nothing):
+python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c $CAMP
+
+# Write graph.json (backs up any existing file first):
+python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c $CAMP --apply
+
+# Exit 0 even when nothing is missing (for use as a check):
+python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c $CAMP --allow-empty
+
+# Skip place nodes, or emit the proposal as JSON:
+python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c $CAMP --no-places
+python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c $CAMP --json
+```
+
+**It never guesses.** A faction it cannot resolve, or a stance it cannot map,
+is reported under `UNRESOLVED` rather than written as a confident edge. It also
+cross-checks `world.md`'s per-faction attitude against `state.md`'s faction
+stances and reports `STANCE CONFLICTS` — the two are separate canonical
+sources for the same fact, so a mismatch is drift worth seeing early.
+
+After seeding, relationships the index files do not state still come from
+`/dm:dnd graph extract` and the save-time relationship sweep.
+
+---
+
 ## Campaign Search — `scripts/campaign_search.py`
 Keyword search across campaign files. Use this **before** loading full files into context when looking up a specific past event, NPC detail, or plot thread.
 

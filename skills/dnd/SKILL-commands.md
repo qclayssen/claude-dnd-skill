@@ -119,15 +119,22 @@ Full step-by-step procedures for all `/dm:dnd` slash commands. Load this file at
 3. **Read campaign ruleset** for this session: `python3 ${CLAUDE_SKILL_DIR}/scripts/paths.py campaign-ruleset <name>` (or import `campaign_ruleset` directly). Stash the result; pass `--ruleset <value>` to `lookup.py`, `build_supplemental.py`, and `combat.py` mastery calls so they route to the correct dataset. The display companion picks up the same value automatically via `push_stats.py --set-campaign`.
 
 4. Read SKILL-scripts.md (for script syntax this session)
-5. **Mark this campaign active** (for the autosave hook): write `{"name": "<campaign-name>"}` to `$(python3 ${CLAUDE_SKILL_DIR}/scripts/paths.py runtime-dir)/active-campaign.json`. This is what `autosave_checkpoint.py` reads to know which campaign to checkpoint; a stale marker is harmless. Then read state.md, world.md, npcs.md (index only), and all characters/*.md
-   - **state.md contains `## DM Style Notes`** — read and internalize before narrating anything. These are table-specific calibration patterns that override default DM instincts.
-   - **state.md contains `## Pinned Facts`** — read and keep hot for the whole session. These are stable soft facts the table has chosen never to forget (a promise made, a dead relative's name, a house rule, a running joke, a detail the player flagged as mattering). Unlike Live State Flags, they don't change turn-to-turn — they are standing canon. Weave them in when relevant and never contradict one; if a pinned fact is now wrong, correct it via `/dm:dnd pin` rather than silently overriding it. If the section reads *(none pinned yet)*, there's nothing to load.
-   - **world.md:** Load in full — World Foundations, Three Truths, and factions inform narration and faction moves. Do NOT read `world-seeds.md` at load (generation artifact, not live reference).
-   - **world-nodes.md (imported campaigns only):** Do **NOT** load at session start. It holds the full Quest Seed Bank and Adventure Nodes for the whole module; read only the current act's nodes on demand when a scene needs them. If the file is absent (dynamic/sandbox, or an older import), there is nothing to lazy-load — `world.md` already carries the nodes, unchanged from prior behavior.
-   - **arc.md (imported campaigns only):** Do **NOT** load at session start. `state.md → ## Campaign Arc` already carries the current + next chapter window. Read `arc.md` only when advancing chapters or when a player asks about the broader arc. If absent, the arc lives inline in `state.md` (dynamic/sandbox) — read it there as before. **Sanity-check the pointer at load:** if `## Campaign Arc`'s `current_chapter` shows its `outstanding_beats` already cleared, or the last session plainly ended in the *next* chapter's location or situation, the pointer never advanced — surface it (*"the current chapter looks finished; pick up in `<next_chapter>`?"*) instead of opening another scene in a chapter that's already done. A pointer that never moves is exactly how a structured campaign quietly drifts off its own arc and starts improvising.
-   - **source/<chapter-id>.md (imported campaigns only):** the full module text, one file per chapter. Never loaded at session start. Before running a scene in a chapter, read that chapter's `source/<id>.md` (the `source_ref` in the arc) — and only that chapter. This is the predefined-story equivalent of reading a single NPC's full entry on demand.
-   - **npcs.md:** Index row only at load. **Before writing substantive dialogue or decisions for any named NPC, read their full entry in `npcs-full.md`.** Do not wait for an explicit `/dm:dnd npc [name]` call — do it proactively when a scene centers on that character. Index rows carry surface traits only; personality axes, relationships, and hidden goals are in the full entry.
-   - **Do NOT read session-log.md at load** — recent events are already in `state.md → ## Recent Events`. Only read session-log.md if the player explicitly requests a recap, or if DM Calibration from the last 1-2 sessions is needed and not already internalized.
+5. **Mark this campaign active** (for the autosave hook): write `{"name": "<campaign-name>"}` to `$(python3 ${CLAUDE_SKILL_DIR}/scripts/paths.py runtime-dir)/active-campaign.json`. This is what `autosave_checkpoint.py` reads to know which campaign to checkpoint; a stale marker is harmless.
+
+   **Then regenerate and read the campaign brain.** `brain.md` is a single generated file carrying the live situation, Pinned Facts, on-scene cast, factions, open loops, active relationships, the chapter window, and the pending canon decisions. It replaces the old read-don't-read instruction list: those rules described which files held which facts, so a DM that skipped a read had no fallback — the facts lived only in the rules. The brain carries the facts directly, so one read is the whole load.
+
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c <campaign-name>
+   ```
+
+   Then read `<campaign>/brain.md` in full, plus `state.md → ## DM Style Notes` (table-specific calibration that overrides default DM instincts and is not carried in the brain) and all `characters/*.md`.
+
+   - **If `brain.py` reports TRUNCATED**, the file is missing low-priority sections and names them. Pull those from the source files listed in its DEEP FILES section. A truncated brain still beats no brain.
+   - **If `brain.py` is missing or fails** (older install, missing index file), fall back to the manual read: `state.md`, `world.md`, `npcs.md` (index only), and all `characters/*.md` — skipping `world-seeds.md`, `world-nodes.md`, `arc.md`, `source/*.md`, and `session-log.md` (all lazy). Nothing downstream depends on the brain existing, so continue as before.
+   - **Pinned Facts in the brain are verbatim and load-bearing.** These are the soft facts the table has chosen never to forget. Never contradict one, and never restate one loosely. If a Pinned Fact is now wrong, correct it at the source via `/dm:dnd pin` — never by editing `brain.md`, which is regenerated.
+   - **PENDING CANON DECISIONS are undecided player forks.** Do not resolve them for the player; record the answer in the matching `state.md` DM Notes field at save.
+   - **Do NOT read at load:** `world-seeds.md` (generation artifact), `world-nodes.md` (full quest seed bank — read the current act's on demand), `arc.md` (only when advancing chapters), `source/<id>.md` (only the current chapter, before running a scene in it), `session-log.md` (only on an explicit recap request). The brain already carries the pointers each of those would have supplied at load time.
+   - **Before writing substantive dialogue or decisions for any named NPC, read their full entry in `npcs-full.md`** (or `npc-files/<name>.md` for a core character). Do it proactively when a scene centers on that character, not only on an explicit `/dm:dnd npc [name]` call. Index rows and the brain carry surface traits only; personality axes, relationships, hidden goals, and voice are in the full entry.
 6. Push full party stats to display sidebar. **CRITICAL:** use `--json` with a complete player object — **never** the `--player` shorthand here. `--player` only updates existing fields; it cannot populate the card or sheet tabs. The display shows "Full sheet not loaded" when `sheet` is absent.
 
    ```bash
@@ -214,7 +221,18 @@ Full step-by-step procedures for all `/dm:dnd` slash commands. Load this file at
       ```
       Tell the DM the backup path explicitly so they can revert if needed.
 
-   3. **Run `/dm:dnd graph init <name>`** — propose seed nodes/edges from `npcs.md`, `world.md`, and `state.md` (Live State Flags + Active Quests + recent NPC dispositions). Show the DM a single approval block (counts by type + named entries) and ask for one go/no-go. After approval, batch-execute the `add-node` and `add-edge` calls. Use `--since N` matching when each node/edge first became canon (use `1` for foundational; the actual session number for newer NPCs/edges).
+   3. **Seed the graph.** `graph_seed.py` derives the seed nodes and edges from `npcs.md`, `world.md`, `state.md`, and `characters/*.md` deterministically, so this is a script call, not an improvised proposal. Run it as a **dry run first**, show the DM the proposal (counts by type plus the named entries), and ask for one go/no-go before writing:
+
+      ```bash
+      python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c <name>            # dry run
+      python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c <name> --apply    # on approval
+      ```
+
+      Two things in the output need a human decision, and neither is auto-applied:
+      - `UNRESOLVED` — a faction or stance `graph_seed.py` could not map. It reports rather than guesses. Resolve by hand (add a `member_of` edge, or fix the source cell).
+      - `STANCE CONFLICTS` — `world.md`'s per-faction "Attitude toward party" disagrees with `state.md`'s faction stances. Both are canonical for the same fact, so one is stale. Ask the DM which is right, fix the losing source, then re-run.
+
+      After `--apply`, edges the index files do not state (who owes whom, who opposes whom) still come from `/dm:dnd graph extract` and the save-time relationship sweep in step 6. The seeder deliberately does not invent them.
 
    4. **Validate** with a `scene-context` query at the current location to confirm the subgraph is reachable.
 
@@ -354,6 +372,57 @@ Campaign "<name>" created from <source title>.
 
 ---
 
+## `/dm:dnd check [<draft-file>]`
+
+Mechanical grounding check on a draft. Flags any capitalized name that appears
+**nowhere in the campaign corpus** — that is, a name the DM invented. Also
+reports disposition drift (an NPC the graph records as `hostile` being narrated
+warmly, or the reverse) as an advisory.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c <campaign-name> --text "<draft>"
+python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c <campaign-name> --file <draft.md>
+cat <draft.md> | python3 ${CLAUDE_SKILL_DIR}/scripts/check.py -c <campaign-name>
+```
+
+**Run this before delivering any narration that names a person, place, or faction
+you have not already read this session** — once per scene beat that introduces a
+name, not once per session. It is the one instruction in this system that is
+checked rather than trusted, which is the point: every other consistency rule
+here is a request to the model, and requests decay under context pressure. This
+one does not.
+
+Unknown names are advisory by default (exit 0) so the check can be introduced
+without blocking play; use `--strict` when you want a hard gate.
+
+**Triage an unknown name — the three legitimate outcomes:**
+1. **It is canon and the corpus is incomplete** (a name from a source file not in the campaign dir, or a genuinely new NPC the player just created). Pass `--allow <name>` for this run, then register it properly — `/dm:dnd npc new`, then `graph_seed.py --apply` — so future checks and the brain both know it.
+2. **It is a typo or drift of a real name.** The output lists `did you mean` candidates. Use the real name.
+3. **It is genuinely invented.** Rewrite. An improvised NPC is fine *if it gets registered*; an improvised NPC that exists only in one paragraph is exactly the drift that compounds over a campaign.
+
+A `did you mean` hit on a name that has no `npcs.md` row is the highest-value
+finding this tool produces — that is a name already in the corpus that never got
+indexed, which means the DM had it in context without a canonical record.
+
+---
+
+## `/dm:dnd brain`
+
+Regenerate and show `<campaign>/brain.md`, the always-hot campaign brief read at
+every `/dm:dnd load`. See `/dm:dnd load` step 5 and `SKILL-scripts.md`.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c <campaign-name>           # write
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c <campaign-name> --stdout # print
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c <campaign-name> --check  # staleness gate
+```
+
+Use `--check` before a long session or a playtest to confirm the brain is not
+behind its sources. Never hand-edit `brain.md` — it is generated, and an edit
+there is silently discarded on the next save.
+
+---
+
 ## `/dm:dnd save`
 Write session events to session-log.md, update state.md (location, active quests, party HP/resources, recent events), update any characters/*.md that changed. Mirror each updated character to global roster (`~/.claude/dnd/characters/<name>.md`).
 
@@ -369,6 +438,18 @@ If nothing changed in a category this session, leave it as-is. If a fact was wro
 **Structured (imported) campaigns — keep the arc window and arc.md in sync.** Advancing the pointer is not optional bookkeeping — it is what keeps the campaign on its own rails, and a pointer that never moves is how an imported module quietly becomes an improvised one. Before you decide "no chapter advanced," check honestly: **if this session cleared the last of the current chapter's `outstanding_beats`, or the party has plainly moved into the next chapter's location or situation, the chapter advanced — treat it as such and move the pointer now.** When a chapter advances: mark the completed chapter `status: complete` in `arc.md`, set the new chapter `status: current`, and update `state.md → ## Campaign Arc` so its `current_chapter`, `current_chapter_detail`, `next_chapter`, and `outstanding_beats` reflect the new window. The full tree stays in `arc.md`; `state.md` carries only the current + next chapter so the load stays light. Only when the party is genuinely still mid-chapter, update `outstanding_beats`/`steering_notes` inline in `state.md` — no need to touch `arc.md`. (Dynamic/sandbox campaigns have no `arc.md`; update the inline arc in `state.md` as before.)
 
 Then update `## Faction Moves` in state.md: for each active faction, answer *"what did they do while the party was occupied?"* One line per faction — even if nothing visible yet. Confirm what was written.
+
+**Regenerate the campaign brain as the last step of every save.** The brain is derived from `state.md` / `npcs.md` / `world.md` / `graph.json`, so it goes stale the moment any of those change — and a stale brain at the next load is worse than no brain, because it looks authoritative:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/brain.py -c <campaign-name>
+```
+
+Run it *after* the `state.md` writes, the relationship-shift sweep, and the
+Continuity Archive update, so it picks up all of them. If a new NPC or faction
+was added this session, also re-run `graph_seed.py --allow-empty` to fold it into
+the graph first — otherwise the brain's RELATIONSHIPS section will not know
+about it.
 
 **Session tail archive:** `dnd-display-app.py` continuously writes `~/.claude/dnd/campaigns/<name>/session_tail.json` — campaign-specific path, atomic-write, skip-on-empty guarded (since 2026-05-01). At save time:
 
@@ -804,7 +885,17 @@ For background reading on the design and the A/B replay study that motivated it,
 All subcommands invoke `python3 ${CLAUDE_SKILL_DIR}/scripts/campaign_graph.py <subcommand> --campaign <name> [args]`.
 
 ### `/dm:dnd graph init [campaign-name]`
-First-time bootstrap. Read existing `npcs.md` / `world.md` / `state.md` for the campaign. Propose a node list (NPCs as `npc_*`, factions as `faction_*`, key locations as `place_*`) and a starter edge list (faction membership from npcs.md tables, NPC location from "Lives in / Based at" fields, faction relationships from world.md). Display the proposed list to the DM and **ask for approval** before writing — do not silently extract. After approval, run `add-node` and `add-edge` for each. Use `--since` matching state.md's current session count.
+
+First-time bootstrap. **Backed by `scripts/graph_seed.py`** — it derives the seed nodes and edges from `npcs.md`, `world.md`, `state.md`, and `characters/*.md` deterministically, so this is a script call rather than an improvised proposal:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c <name>            # dry run
+python3 ${CLAUDE_SKILL_DIR}/scripts/graph_seed.py -c <name> --apply    # writes graph.json
+```
+
+Display the dry-run proposal to the DM and **ask for approval** before `--apply` — it never writes silently. Resolve anything under `UNRESOLVED` or `STANCE CONFLICTS` by hand before applying; the script reports both rather than guessing. It is idempotent, so re-running after a `/dm:dnd save` is a safe drift check.
+
+Edges the index files do not state (who owes whom, who opposes whom) still come from `/dm:dnd graph extract` and the save-time sweep. The seeder deliberately does not invent them.
 
 For existing campaigns being initialized for the first time, the `/dm:dnd load` flow offers to back the campaign directory up first; honour that flow rather than running init from a cold prompt.
 
