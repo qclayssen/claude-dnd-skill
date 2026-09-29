@@ -413,7 +413,7 @@ Also reports **disposition drift** (advisory): an NPC the graph records as
 
 The check is **per word**, not per name: "Gormund Bale" is looked up as
 "Gormund" and "Bale" separately, so a canon first name with an invented surname
-passes. Tokens are normalised first: a trailing possessive (`'s`, `\u2019s`) is
+passes. Tokens are normalised first: a trailing possessive (ASCII or typographic `'s`) is
 stripped, hyphenated words are split, and a capitalized common opener
 ("Suddenly", "Nobody") at the start of a sentence is ignored unless the same
 word is also capitalized mid-sentence.
