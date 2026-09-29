@@ -460,7 +460,7 @@ def main() -> int:
         print(text)
         return 0
 
-    bpath.write_text(text, encoding="utf-8")
+    bpath.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {bpath}  ({meta['words']} words, budget {meta['max_words']})",
           file=sys.stderr)
     if meta["dropped"]:

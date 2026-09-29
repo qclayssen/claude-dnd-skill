@@ -90,7 +90,7 @@ without any migration — `graph_seed.py` seeds a missing `graph.json`, and
   the real-world false-positive profile to differ on other campaigns, since
   `check.py`'s stopword list is hand-maintained and grows only on observed
   false positives.
-- 62 new tests in `tests/test_campaign_brain.py`; the existing 262 still pass.
+- 87 new tests in `tests/test_campaign_brain.py`; the existing 201 still pass (288 in total).
 
 ## [2.5.0] — 2026-09-16 — Creature defenses, narration badges, and an XP ledger
 
