@@ -129,6 +129,7 @@ WORLD_MD = """\
 
 ## World Foundations
 Greyhaven sits on a cold coast.
+The tidewater reaches the saltmarsh twice a day, and the causeway floods with it.
 
 ## The Settlement: Greyhaven
 ### Three Truths
@@ -678,6 +679,65 @@ class GroundingCheckTests(_CampaignCase):
             rep = check.check_draft(self.campaign, text, check_disposition=False)
             total += len(rep["unknown"])
         self.assertEqual(total, 0, f"{total} false positives on canon text")
+
+    # ── casing: a canon word is canon however it was written ──────────────────
+    #
+    # The corpus harvest used to be capital-only, matching the draft side's
+    # capital-only extraction. That made the two agree about casing by
+    # accident: a canon word written lowercase in prose was invisible to the
+    # vocabulary, and a draft that capitalized it — because it opened a
+    # sentence — was reported as an invented name.
+    #
+    # It fired on a real draft against a real campaign, on a place that is in
+    # the corpus ("the restricted quadrant of the gardens" in canon, "Quadrant
+    # Four" in the draft). The shape is the worst kind for a per-beat gate: it
+    # does not fire every turn, only when the corpus happens to lowercase a
+    # word, so it reads as model noise and teaches the GM to ignore the gate.
+    #
+    # The test above cannot catch this: it feeds the gate the corpus's own text,
+    # where the casing already agrees with itself.
+
+    def test_a_lowercase_canon_word_capitalized_in_a_draft_is_not_an_invention(self):
+        # "causeway" and "tidewater" appear in canon prose only in lowercase —
+        # the shape that used to be invisible. ("Saltmarsh" would not do: it is
+        # also capitalized elsewhere in the fixture, so it was in the vocabulary
+        # either way and the test passed against the unfixed harvest.)
+        vocab = check.build_vocabulary(self.campaign)
+        self.assertIn("causeway", vocab)
+        rep = check.check_draft(
+            self.campaign, "Causeway fog rolls in off the tidewater.")
+        self.assertEqual([u["name"] for u in rep["unknown"]], [])
+
+    def test_casing_of_a_canon_word_does_not_decide_whether_it_is_known(self):
+        """The asymmetry, stated as an invariant: same word, same campaign, two
+        casings, one verdict. Before the fix these disagreed."""
+        low = check.check_draft(
+            self.campaign, "They cross the causeway at dawn.", check_disposition=False)
+        cap = check.check_draft(
+            self.campaign, "Causeway mist clings to the rail.", check_disposition=False)
+        self.assertEqual(low["unknown"], [])
+        self.assertEqual(cap["unknown"], [])
+
+    def test_the_case_insensitive_harvest_still_catches_invented_names(self):
+        """Widening what counts as *known* must not let a real invention
+        through. A name the DM invented is absent from the corpus in every
+        case, so folding case cannot legitimize it."""
+        rep = check.check_draft(
+            self.campaign,
+            "Thessaly Vandermaine, a Strigoi, addresses the Wyrmling Coven.")
+        self.assertEqual(
+            [u["name"] for u in rep["unknown"]],
+            ["Thessaly", "Vandermaine", "Strigoi", "Wyrmling", "Coven"])
+
+    def test_a_capitalized_common_word_absent_from_corpus_is_still_caught(self):
+        """The cost of the wider harvest, pinned. Folding case means a common
+        word that happens to appear in the corpus is 'known' — that is the
+        intended trade. A capitalized common word that does NOT appear must
+        still be reported, or the gate would have been silenced rather than
+        fixed."""
+        self.assertNotIn("curator", check.build_vocabulary(self.campaign))
+        rep = check.check_draft(self.campaign, "The Curator examines the tome.")
+        self.assertEqual([u["name"] for u in rep["unknown"]], ["Curator"])
 
 
 if __name__ == "__main__":

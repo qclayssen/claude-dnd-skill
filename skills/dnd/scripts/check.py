@@ -140,10 +140,30 @@ def _is_codeish(path: pathlib.Path) -> bool:
 
 
 def build_vocabulary(campaign: str, extra_files=None) -> set:
-    """Every capitalized word token that appears anywhere in the campaign corpus.
+    """Every word token that appears anywhere in the campaign corpus.
 
     Returns a set of lowercase tokens. A word the DM invented is absent; a word
-    that was ever written down is present, regardless of which file.
+    that was ever written down is present, regardless of which file or how it
+    was capitalised.
+
+    The harvest is case-INSENSITIVE, and it has to be. The draft side
+    (`extract_candidates`) only ever proposes *capitalized* tokens, because a
+    capitalized word is the only thing that could be a proper noun. Matching a
+    capitalized draft token against a vocabulary harvested from capitalized
+    corpus tokens alone means the corpus must happen to agree about casing: a
+    canon place written lowercase in prose ("the restricted quadrant of the
+    gardens") is invisible, and a draft that opens a sentence with it
+    ("Quadrant Four") is reported as an invented name.
+
+    That is not hypothetical. It fired on a real draft against a real campaign,
+    on a place that is in the corpus. It is also the worst shape of false
+    positive for a per-beat gate: it does not fire every turn, only when the
+    corpus happens to lowercase a word, so it reads as model noise rather than
+    as a defect, and a GM who trusts the gate learns to ignore it.
+
+    So: harvest every word, folded. The check side is already case-folded, so
+    this only widens what counts as *known* — it cannot let an invented name
+    through, because an invented name is absent from the corpus in every case.
 
     `brain.md` is excluded even though it lives in the campaign dir: it is
     *derived* from the other sources, so letting it feed the vocabulary would
@@ -168,14 +188,21 @@ def build_vocabulary(campaign: str, extra_files=None) -> set:
             text = read_text(p)
         except (TextDecodeError, OSError):
             continue
-        for tok in _TOKEN_RE.findall(text):
+        for tok in _WORD_RE.findall(text):
             words.add(tok.lower())
     return words
 
 
 # A capitalized word token: an initial capital followed by lowercase letters,
 # allowing internal apostrophes/hyphens (Oona, Tulk, Raven's) and diacritics.
+# This is the DRAFT side — what could be a proper noun, so it must be capitalized.
 _TOKEN_RE = re.compile(r"\b[A-Z][a-zà-ÿ'’\-]*\b")
+
+# The CORPUS side: any word, in any case. Paired with build_vocabulary's
+# case-insensitive harvest so a canon word is known however it was written and
+# however the draft capitalized it. See that docstring for why the asymmetry
+# against _TOKEN_RE is deliberate rather than an oversight.
+_WORD_RE = re.compile(r"\b[A-Za-zà-ÿ][a-zà-ÿ'’\-]*\b")
 
 
 def _known_names(campaign: str) -> set:
