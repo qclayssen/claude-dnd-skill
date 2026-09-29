@@ -740,5 +740,151 @@ class GroundingCheckTests(_CampaignCase):
         self.assertEqual([u["name"] for u in rep["unknown"]], ["Curator"])
 
 
+# ── review-fix regression tests ─────────────────────────────────────────────
+
+class NarrationFalsePositiveTests(_CampaignCase):
+    """Ordinary narration must not be flagged when the names in it are canon."""
+
+    def _unknown(self, draft):
+        rep = check.check_draft(self.campaign, draft, check_disposition=False)
+        return [u["name"] for u in rep["unknown"]]
+
+    def test_review_narration_flags_nothing(self):
+        self.assertEqual(self._unknown(
+            "Sister Halda's ledger. Suddenly Wick nods. Half-orc dockhand. "
+            "Nobody moves. Brann's knife."), [])
+
+    def test_possessive_ascii_and_typographic(self):
+        self.assertEqual(self._unknown("Brann's knife and Halda\u2019s ledger."), [])
+
+    def test_invented_possessive_still_caught(self):
+        self.assertEqual(self._unknown("They follow Corrin's lantern."), ["Corrin"])
+
+    def test_hyphenated_tokens_are_split(self):
+        self.assertEqual(self._unknown("The Halda-Brann pact holds."), [])
+        self.assertEqual(self._unknown("The Halda-Corrin pact holds."), ["Corrin"])
+
+    def test_sentence_openers_ignored(self):
+        self.assertEqual(self._unknown("He waits. Suddenly the door opens. Nobody speaks."), [])
+
+    def test_opener_seen_mid_sentence_is_checked(self):
+        # Capitalized mid-sentence, so it is being used as a name.
+        self.assertEqual(self._unknown("Suddenly the door opens. He meets Nobody Vhal."),
+                         ["Nobody", "Vhal"])
+
+    def test_unknown_sentence_initial_name_still_caught(self):
+        self.assertEqual(self._unknown("Corrin waits by the door."), ["Corrin"])
+
+
+class BrainReviewFixTests(_CampaignCase):
+
+    def test_drops_lowest_priority_first(self):
+        full, _ = brain.build(self.campaign, max_words=100000)
+        sizes = {}
+        for sec in ("PENDING CANON DECISIONS", "DEEP FILES", "CHAPTER WINDOW",
+                    "RELATIONSHIPS", "OPEN LOOPS", "FACTIONS", "IN SCENE"):
+            self.assertIn("## " + sec, full)
+        total = len(full.split())
+        # A budget that forces a few drops but not all of them.
+        text, meta = brain.build(self.campaign, max_words=total - 40)
+        self.assertTrue(meta["dropped"])
+        order = ["index", "pending", "chapter", "rel", "loops", "factions", "present"]
+        self.assertEqual(meta["dropped"], order[:len(meta["dropped"])])
+        self.assertIn("## IN SCENE", text)
+        self.assertIn("## FACTIONS", text)
+
+    def test_tight_budget_keeps_present_factions_loops(self):
+        # The fixture is small (452 words in full); 400 forces a drop of the
+        # two lowest-priority sections only.
+        text, meta = brain.build(self.campaign, max_words=400)
+        for keep in ("## IN SCENE", "## FACTIONS", "## OPEN LOOPS"):
+            self.assertIn(keep, text, meta)
+        self.assertNotIn("## PENDING CANON DECISIONS", text)
+        self.assertNotIn("## DEEP FILES", text)
+        self.assertLessEqual(meta["words"], 400)
+
+    def test_budget_counts_header(self):
+        text, meta = brain.build(self.campaign, max_words=320)
+        self.assertEqual(meta["words"], len(text.split()))
+        self.assertLessEqual(meta["words"], 320)
+
+    def test_two_runs_byte_identical(self):
+        a, _ = brain.build(self.campaign)
+        b, _ = brain.build(self.campaign)
+        self.assertEqual(a, b)
+        self.assertNotIn("Generated", a)
+        self.assertNotRegex(a, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
+
+    def test_two_cli_runs_byte_identical(self):
+        self._run("brain.py", "-c", self.campaign, expect=0)
+        first = (self.camp / "brain.md").read_bytes()
+        self._run("brain.py", "-c", self.campaign, expect=0)
+        self.assertEqual(first, (self.camp / "brain.md").read_bytes())
+
+
+class MissingCampaignTests(_CampaignCase):
+
+    def test_facts_load_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            cf.load("no-such-campaign-typo")
+
+    def test_graph_seed_apply_typo_exits_nonzero_no_dir(self):
+        r = self._run("graph_seed.py", "-c", "typo-camp", "--apply")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("error", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertFalse((self.root / "campaigns" / "typo-camp").exists())
+
+    def test_brain_typo_exits_nonzero_no_file(self):
+        r = self._run("brain.py", "-c", "typo-camp")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertFalse((self.root / "campaigns" / "typo-camp").exists())
+
+    def test_check_typo_exits_nonzero(self):
+        r = self._run("check.py", "-c", "typo-camp", "--text", "Hello there.")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
+
+
+class SeedReviewFixTests(_CampaignCase):
+
+    def test_same_name_faction_and_place_are_distinct_nodes(self):
+        (self.camp / "world.md").write_text(
+            WORLD_MD + "\n### Silverquill (*college*)\n- **Goals:** rhetoric.\n"
+            "- **Attitude toward party:** neutral\n", encoding="utf-8")
+        (self.camp / "npcs.md").write_text(
+            NPCS_MD + "\n| Ona Vale | Tutor | Silverquill | Silverquill | neutral | x |\n",
+            encoding="utf-8")
+        prop = graph_seed.build(self.campaign)
+        sq = [(n["type"], n["id"]) for n in prop["nodes"] if n["name"] == "Silverquill"]
+        self.assertEqual(sorted(t for t, _ in sq), ["faction", "place"])
+        self.assertEqual(len({i for _, i in sq}), 2)
+
+    def test_cold_met_in_session_2_is_not_allied(self):
+        self.assertEqual(graph_seed.map_stance("cold, met in session 2"), "")
+        self.assertEqual(graph_seed._map_score("cold, met in session 2"), "")
+        self.assertEqual(graph_seed._map_score("in year 3"), "")
+
+    def test_leading_score_still_maps(self):
+        self.assertEqual(graph_seed._map_score("  +2 (guardian)"), "allied")
+        self.assertEqual(graph_seed._map_score("-1"), "suspicious")
+        self.assertEqual(graph_seed._map_score("3rd time lucky"), "")
+
+    def test_distrust_keyword(self):
+        self.assertEqual(graph_seed.map_stance("distrusts the party"), "suspicious")
+        self.assertEqual(graph_seed.map_stance("-3 (distrusts Brann)"), "hostile")
+
+    def test_apply_with_nothing_new_makes_no_backup_or_write(self):
+        self._run("graph_seed.py", "-c", self.campaign, "--apply", expect=0)
+        gp = self.camp / "graph.json"
+        before = gp.read_bytes()
+        mtime = gp.stat().st_mtime_ns
+        self._run("graph_seed.py", "-c", self.campaign, "--apply", "--allow-empty", expect=0)
+        self.assertEqual(before, gp.read_bytes())
+        self.assertEqual(mtime, gp.stat().st_mtime_ns)
+        self.assertEqual(list(self.camp.glob("graph.json.pre-seed-*")), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,17 @@ Secondary check: disposition drift. If the graph says an NPC is `suspicious`
 with a surface/secret split, and the draft narrates them warmly, that is worth
 a look. Advisory only — tone words are noisy.
 
+Granularity: the check is per WORD, not per name. "Gormund Bale" is two tokens
+and each is looked up on its own, so a real first name paired with an invented
+surname (or two canon words combined into a name nobody wrote down) passes.
+That is deliberate: a per-name check would need to know where names start and
+end, and a false accusation costs more than a miss.
+
+Tokens are normalised before lookup: a trailing possessive ('s / typographic
+'s) is stripped, hyphenated tokens are split into their parts, and a
+capitalized word that merely opens a sentence is ignored when it is a common
+English opener ("Suddenly", "Nobody") and is never capitalized mid-sentence.
+
 It does NOT try to verify rules, dice, or lore. It is a name-and-relationship
 gate, and it is deliberately conservative: a false accusation mid-scene costs
 far more than a missed one.
@@ -171,7 +182,7 @@ def build_vocabulary(campaign: str, extra_files=None) -> set:
     `brain.md` would permanently legitimize that name, and the check would then
     pass on exactly the hallucination it exists to catch.
     """
-    root = cf.campaign_dir(campaign)
+    root = cf.resolve(campaign)
     words: set = set()
     paths = []
     for p in sorted(root.rglob("*")):
@@ -190,13 +201,42 @@ def build_vocabulary(campaign: str, extra_files=None) -> set:
             continue
         for tok in _WORD_RE.findall(text):
             words.add(tok.lower())
+            # Also the normalised parts, so "Halda's" in canon makes "Halda"
+            # known and "Half-orc" makes both "half" and "orc" known.
+            for part in _parts(tok):
+                words.add(part.lower())
     return words
 
 
 # A capitalized word token: an initial capital followed by lowercase letters,
 # allowing internal apostrophes/hyphens (Oona, Tulk, Raven's) and diacritics.
 # This is the DRAFT side — what could be a proper noun, so it must be capitalized.
+# `extract_candidates` normalises what this matches (possessives, hyphens).
 _TOKEN_RE = re.compile(r"\b[A-Z][a-zà-ÿ'’\-]*\b")
+
+# Trailing possessive: Halda's / Halda’s / Brann' / Brann’
+_POSSESSIVE_RE = re.compile(r"['’]s?$")
+
+# Common English words that open sentences in narration. A sentence-initial
+# capital on one of these carries no information. Grown only on observed
+# false positives, like STOPWORDS.
+OPENERS = {
+    "Suddenly", "Nobody", "Nothing", "Everyone", "Everybody", "Everything",
+    "Someone", "Somebody", "Something", "Anyone", "Anything", "Slowly",
+    "Quickly", "Quietly", "Finally", "Meanwhile", "Instead", "Perhaps",
+    "Maybe", "However", "Somehow", "Silence", "Outside", "Inside", "Behind",
+    "Beyond", "Above", "Below", "Beside", "Between", "Across", "Later",
+    "Soon", "Already", "Almost", "Together", "Alone", "Slow", "Nearby",
+    "Overhead", "Somewhere", "Nowhere", "Everywhere", "Whatever", "Whoever",
+    "Whenever", "Wherever", "Despite", "Although", "Though", "Since",
+    "Without", "Within", "From", "With", "Into", "Onto", "Upon", "Toward",
+    "Towards", "Against", "During", "Among", "Beneath", "Neither", "Either",
+    "Both", "Several", "Someone", "Enough", "Nearly", "Barely", "Merely",
+    "Gently", "Carefully", "Angrily", "Softly", "Silently", "Eventually",
+    "Immediately", "Presently", "Afterward", "Afterwards", "Elsewhere",
+    "Whatever", "Surely", "Certainly", "Clearly", "Honestly", "Truly",
+    "Please", "Thanks", "Okay", "Well", "Oh", "Ah", "Hm", "Hmm", "Ha",
+}
 
 # The CORPUS side: any word, in any case. Paired with build_vocabulary's
 # case-insensitive harvest so a canon word is known however it was written and
@@ -221,31 +261,61 @@ def _known_names(campaign: str) -> set:
     return names
 
 
+def _parts(tok: str) -> list:
+    """Normalise one matched token to its lowercase-able parts.
+
+    'Halda's' -> ['Halda']; 'Half-orc' -> ['Half', 'orc']; 'Half-orc's' likewise.
+    Empty parts (from stray hyphens) are dropped.
+    """
+    tok = _POSSESSIVE_RE.sub("", tok)
+    return [p for p in tok.split("-") if p]
+
+
+def _is_sentence_initial(text: str, start: int) -> bool:
+    """True when the token at `start` opens a sentence or line.
+
+    Looks back past spaces, opening quotes/brackets and markdown emphasis or
+    list markers; the token is initial if that reaches the start of the text, a
+    newline, or sentence-ending punctuation.
+    """
+    i = start - 1
+    while i >= 0 and text[i] in " \t\"“‘'(*_>#-[":
+        i -= 1
+    return i < 0 or text[i] in ".!?…\n\r"
+
+
 def extract_candidates(text: str) -> list:
     """Capitalized tokens in the draft that could plausibly be a proper noun.
 
-    Filters, in order: multi-character minimum; not a stopword; not a bare
-    title; not the sole capital of a title+name pair (the name is then taken
-    from the token after it); not immediately repeated.
+    Tokens are normalised first (possessive stripped, hyphens split). Filters,
+    in order: multi-character minimum; not a stopword; not a bare title; not
+    a common sentence opener that is only ever seen sentence-initial; not
+    already reported. Returned strings are the normalised parts.
     """
+    matches = list(_TOKEN_RE.finditer(text))
+    initial = [_is_sentence_initial(text, m.start()) for m in matches]
+    # Words capitalized somewhere mid-sentence are being used as names.
+    mid_seen = set()
+    for m, init in zip(matches, initial):
+        for j, part in enumerate(_parts(m.group(0))):
+            if part[:1].isupper() and (j > 0 or not init):
+                mid_seen.add(part.lower())
     out: list = []
-    toks = _TOKEN_RE.findall(text)
-    for i, tok in enumerate(toks):
-        if len(tok) < 2:
-            continue
-        if tok in STOPWORDS:
-            continue
-        if tok in TITLES:
-            # `Magister Ilva Crane` — the title is not the name; keep scanning
-            # and let the following token stand on its own.
-            continue
-        if i > 0 and toks[i - 1] in TITLES:
-            # previous token was a title, so this is the name itself
-            pass
-        key = tok.lower()
-        if key in out_keys(out):
-            continue
-        out.append(tok)
+    seen: set = set()
+    for m, init in zip(matches, initial):
+        for j, tok in enumerate(_parts(m.group(0))):
+            if len(tok) < 2 or not tok[0].isupper():
+                continue
+            if tok in STOPWORDS or tok in TITLES:
+                # `Magister Ilva Crane` — the title is not the name.
+                continue
+            key = tok.lower()
+            if (init and j == 0 and tok in OPENERS and key not in mid_seen):
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(tok)
     return out
 
 
@@ -257,8 +327,9 @@ def _position_map(text: str) -> dict:
     """lowercase token -> first character offset, for reporting context."""
     pos = {}
     for m in re.finditer(r"[A-Za-z][A-Za-z'’\-]*", text):
-        low = m.group(0).lower()
-        pos.setdefault(low, m.start())
+        pos.setdefault(m.group(0).lower(), m.start())
+        for part in _parts(m.group(0)):
+            pos.setdefault(part.lower(), m.start())
     return pos
 
 

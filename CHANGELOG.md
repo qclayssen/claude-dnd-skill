@@ -46,6 +46,24 @@ without any migration — `graph_seed.py` seeds a missing `graph.json`, and
   advisory. Advisory by default so it can be introduced without blocking play;
   `--strict` is the hard gate.
 
+### Fixed — review findings on the brain / seed / check tools
+
+- **`check.py`** no longer flags ordinary narration: possessives are stripped
+  before lookup, hyphenated tokens are split, and common sentence openers are
+  ignored unless also capitalized mid-sentence. Documented that the check is per
+  word, not per name.
+- **`brain.py`** drops the lowest-priority optional section first when over
+  budget (it was dropping the highest-priority one), counts the header toward
+  `--max-words`, and no longer embeds a timestamp, so regeneration is
+  byte-identical for unchanged sources.
+- **Missing campaign**: `campaign_facts.load` resolves through `find_campaign`
+  and raises `FileNotFoundError`; `graph_seed.py` and `brain.py` exit non-zero
+  with a clean message and no longer create `campaigns/<typo>/`.
+- **`graph_seed.py`**: nodes are keyed by `(type, name)` so a faction and a place
+  can share a name; a numeric stance only counts when it starts the text
+  (`cold, met in session 2` is no longer `allied`); `distrust` maps to
+  `suspicious`; `--apply` with nothing new makes no backup and no write.
+
 ### Changed
 
 - **`/dm:dnd load` step 5** now regenerates and reads `brain.md` instead of

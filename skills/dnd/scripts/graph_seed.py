@@ -66,6 +66,7 @@ _STANCE_PATTERNS = [
     ("friendly", "friendly"),
     ("neutral", "neutral"),
     ("suspicious", "suspicious"),
+    ("distrust", "suspicious"),
     ("hostile", "hostile"),
     ("unfriendly", "suspicious"),
     ("wary", "suspicious"),
@@ -94,6 +95,11 @@ def map_stance(text: str) -> str:
     record a confident reading of a scale we did not actually understand, which
     is the same class of bug as inventing canon.
     """
+    # An explicit leading number is the author's stated value; prefer it over
+    # any keyword in the trailing commentary ('-3 (distrusts Brann)').
+    scored = _map_score(text)
+    if scored:
+        return scored
     low = text.lower()
     best = ""
     best_pos = len(low) + 1
@@ -113,7 +119,9 @@ def _map_score(text: str) -> str:
     State Flags use the same 5-point feel: a mentor at +2 is as strong as it gets,
     Orrin -1 is a mild wariness, 0 is undecided.
     """
-    m = re.search(r"([+-]?\d+)", text)
+    # Only a number that STARTS the text is a score: 'cold, met in session 2'
+    # must not be read as +2.
+    m = re.match(r"\s*([+-]?\d+)\b", text)
     if not m:
         return ""
     try:
@@ -211,7 +219,9 @@ class Proposal:
         self.existing = existing
         self.have_nodes = {n["id"] for n in existing.get("nodes", [])}
         self._node_names = {n["id"]: n.get("name", "") for n in existing.get("nodes", [])}
-        self._node_keys = {n.get("name", "").lower(): n["id"] for n in existing.get("nodes", [])}
+        # Keyed by (type, name): a faction and a place may share a name.
+        self._node_keys = {(n.get("type", ""), n.get("name", "").lower()): n["id"]
+                           for n in existing.get("nodes", [])}
         # (from, to, type) triples already present and not closed — the same
         # idempotence key campaign_graph._existing_edge_match uses.
         self.have_edges = {
@@ -234,7 +244,7 @@ class Proposal:
         name = name.strip()
         if not name:
             return ""
-        key = name.lower()
+        key = (ntype, name.lower())
         if key in self._node_keys:
             return self._node_keys[key]
         nid = force_id or _node_id(ntype, name)
@@ -444,6 +454,14 @@ def apply_proposal(campaign: str, prop: dict) -> dict:
     before_nodes = len(data["nodes"])
     before_edges = len(data["edges"])
 
+    have_ids = {x["id"] for x in data["nodes"]}
+    new_nodes = [n for n in prop["nodes"] if n["id"] not in have_ids]
+    if not new_nodes and not prop["edges"]:
+        # Nothing new: no backup, no rewrite.
+        prop["applied"] = {"nodes_before": before_nodes, "nodes_after": before_nodes,
+                           "edges_before": before_edges, "edges_after": before_edges}
+        return prop
+
     gpath = cg._graph_path(campaign)
     if gpath.exists():
         import datetime
@@ -454,10 +472,7 @@ def apply_proposal(campaign: str, prop: dict) -> dict:
         prop["backup"] = str(backup)
 
     # Reuse the party-node id constant so dispositions key off the same node.
-    for n in prop["nodes"]:
-        if n["id"] in {x["id"] for x in data["nodes"]}:
-            continue
-        data["nodes"].append(n)
+    data["nodes"].extend(new_nodes)
     for e in prop["edges"]:
         e = dict(e)
         e["id"] = cg._next_edge_id(data["edges"])

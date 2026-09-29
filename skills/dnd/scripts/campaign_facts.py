@@ -32,9 +32,9 @@ import re
 from utf8io import read_text, TextDecodeError
 
 try:  # pragma: no cover - import guard for odd install layouts
-    from paths import campaign_dir
+    from paths import find_campaign
 except ImportError:  # pragma: no cover
-    campaign_dir = None  # type: ignore
+    find_campaign = None  # type: ignore
 
 
 # ── section splitting ────────────────────────────────────────────────────────
@@ -507,6 +507,21 @@ def parse_source_index(text: str) -> list:
     return out
 
 
+def resolve(campaign: str):
+    """Locate a campaign directory with the same resolver campaign_graph uses.
+
+    Raises FileNotFoundError when the directory does not exist, so a typo'd
+    campaign name fails loudly instead of yielding an empty brain (or, for
+    graph_seed --apply, a freshly created `campaigns/<typo>/graph.json`).
+    """
+    if find_campaign is None:  # pragma: no cover
+        raise RuntimeError("paths.find_campaign unavailable")
+    root = find_campaign(campaign)
+    if not root.is_dir():
+        raise FileNotFoundError(f"campaign '{campaign}' not found (looked in {root})")
+    return root
+
+
 # ── top-level loader ─────────────────────────────────────────────────────────
 
 def load(campaign: str) -> dict:
@@ -515,12 +530,11 @@ def load(campaign: str) -> dict:
     Returns a dict with `state`, `npcs`, `factions`, `chapters`, plus a
     `missing` list naming index files that were absent (older campaigns, or
     sandbox campaigns where world.md holds the nodes instead). Absent files
-    degrade to empty lists — never an exception — so callers can render a
-    partial brain rather than failing a session load.
+    degrade to empty lists so callers can render a partial brain rather than
+    failing a session load. An absent campaign *directory* is different: that
+    raises FileNotFoundError.
     """
-    if campaign_dir is None:  # pragma: no cover
-        raise RuntimeError("paths.campaign_dir unavailable")
-    root = campaign_dir(campaign)
+    root = resolve(campaign)
     out: dict = {"missing": [], "root": root}
 
     def _read(fname):
@@ -551,4 +565,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Dump parsed campaign facts as JSON.")
     ap.add_argument("-c", "--campaign", required=True)
     a = ap.parse_args()
-    print(json.dumps(load(a.campaign), indent=2, ensure_ascii=False, default=str))
+    try:
+        print(json.dumps(load(a.campaign), indent=2, ensure_ascii=False, default=str))
+    except FileNotFoundError as e:
+        import sys
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(2)
