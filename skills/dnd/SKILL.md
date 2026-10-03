@@ -147,6 +147,24 @@ Three optional settings in `state.md → ## Session Flags` let a table tune the 
 
 ---
 
+## Overview map geometry — quote the engine, never estimate
+
+The campaign overview map (`<campaign>/maps/overview/<slug>.json`) is a *picture* with no square grid, so "how far is the Biblioplex from the Rotunda" and "which way is the Sealed Vault" are not things you work out by eye. `overview.py` computes both from the engine's own geometry and you quote its answer:
+
+```
+${CLAUDE_SKILL_DIR}/scripts/overview.py -c <campaign> list --map <slug>
+${CLAUDE_SKILL_DIR}/scripts/overview.py -c <campaign> between --map <slug> --from library --to rotunda
+${CLAUDE_SKILL_DIR}/scripts/overview.py -c <campaign> between --map <slug> --from library --to rotunda --json
+```
+
+- **Never estimate a distance or a bearing from the overview map yourself, and never infer one from the image's pixel size.** An overview map has no grid, so nothing in the file says how many feet a pixel is; a number you invent is wrong by a factor you cannot see, and it becomes a wrong travel time the players then rely on. Run the script and use what it prints, including the five-foot-square count it gives alongside the feet.
+- **When the script says `feet: not answerable`, that is the answer.** It means the map has no recorded scale, which is the normal state of a freshly drawn overview map. Say the distance is unknown rather than filling it in. To give the map a scale, the GM names two places whose real distance they know: `overview.py ... calibrate --from <pin> --to <pin> --feet <n> --save`.
+- **A bearing needs no scale and is always answerable**, so "which way from here" can be answered on a map with no calibration while "how far" cannot.
+- Pin ids come from `list`. `--from`/`--to` take those ids, not labels; an unknown id is refused rather than guessed at.
+- Unrevealed pins are gm-only and `list` hides them by default (`--all` includes them). They are still measurable by id — you own the campaign, and the reveal flag governs what the *players' display* shows, not who may ask.
+
+---
+
 ## Directory Layout
 
 **Code & assets** live in the skill directory. `${CLAUDE_SKILL_DIR}` is substituted
